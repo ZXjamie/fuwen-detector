@@ -448,14 +448,20 @@ def detect_fuwen(ke_json: dict, fuwen_list: list) -> list:
 
 def fetch_all_fuwen() -> list:
     """从Neo4j查询所有赋文节点（支持多标签）"""
-    # 当前支持：心印赋:概念
-    # 未来扩展：指掌赋:类象 等
+    # 支持：心印赋:概念、指掌赋：条文
+    # 使用 UNION 合并两种标签的查询，统一属性名映射
     statement = """
     MATCH (n:`心印赋:概念`)
     WHERE n.conditions_code IS NOT NULL
     RETURN n.id AS id, n.name AS name, n.conditions_code AS conditions_code,
            n.judgment AS judgment, n.yuanwen AS yuanwen,
            '心印赋:概念' AS label
+    UNION
+    MATCH (n:`指掌赋：条文`)
+    WHERE n.conditions_code IS NOT NULL
+    RETURN n.id AS id, n.subject AS name, n.conditions_code AS conditions_code,
+           n.judgment AS judgment, n.original_text AS yuanwen,
+           '指掌赋：条文' AS label
     """
     
     payload = {'statement': statement}
