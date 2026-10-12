@@ -365,6 +365,9 @@ def detect_fuwen(ke_json: dict, fuwen_list: list) -> list:
         
         # 天将位置
         'tianjiang_position': context_tianjiang_position,
+        
+        # 九宗门课体
+        'jiuzongmen_keti': ke_json.get('jiuzongmen_keti', []),
     }
     
     # 可选字段

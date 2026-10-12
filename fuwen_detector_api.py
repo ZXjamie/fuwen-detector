@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """
-赋文检测器 HTTP API 服务
+赋文检测器 HTTP API 服务（FastAPI 异步版）
 端口 8010
 """
 
 import sys
 import os
 import json
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import asyncio
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+import uvicorn
 
 # 确保能导入同目录模块
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -30,55 +33,7 @@ def get_fuwen_list():
     return _fuwen_cache
 
 
-class FuwenDetectorHandler(BaseHTTPRequestHandler):
-    def do_POST(self):
-        if self.path == '/fuwen/detect':
-            self.handle_detect()
-        else:
-            self.send_error(404)
-
-    def do_GET(self):
-        if self.path == '/health':
-            self.send_json({'status': 'ok', 'fuwen_count': len(get_fuwen_list())})
-        elif self.path == '/reload':
-            global _fuwen_cache
-            _fuwen_cache = None
-            count = len(get_fuwen_list())
-            self.send_json({'status': 'reloaded', 'count': count})
-        else:
-            self.send_error(404)
-
-    def handle_detect(self):
-        """处理检测请求"""
-        try:
-            content_length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(content_length)
-            ke_json = json.loads(body)
-
-            fuwen_list = get_fuwen_list()
-            matched = detect_fuwen(ke_json, fuwen_list)
-
-            self.send_json({
-                'success': True,
-                'matched_count': len(matched),
-                'matched_fuwen': matched
-            })
-
-        except Exception as e:
-            self.send_json({
-                'success': False,
-                'error': str(e)
-            }, 500)
-
-    def send_json(self, data, status=200):
-        self.send_response(status)
-        self.send_header('Content-Type', 'application/json; charset=utf-8')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        self.wfile.write(json.dumps(data, ensure_ascii=False).encode('utf-8'))
-
-    def log_message(self, format, *args):
-        print(f"[{self.log_date_time_string()}] {args[0]}")
+app = FastAPI(title="赋文检测器", version="2.0.0")
 
 
 def wait_for_neo4j(timeout=60):
@@ -103,7 +58,8 @@ def wait_for_neo4j(timeout=60):
     return False
 
 
-if __name__ == '__main__':
+@app.on_event("startup")
+async def startup():
     print(f"🔮 赋文检测器启动中...")
     
     # 等待 Neo4j
@@ -113,14 +69,47 @@ if __name__ == '__main__':
     # 预加载赋文数据
     get_fuwen_list()
     
-    server = HTTPServer(('0.0.0.0', PORT), FuwenDetectorHandler)
     print(f"✅ 赋文检测器运行在 http://0.0.0.0:{PORT}")
     print(f"   检测接口: POST /fuwen/detect")
     print(f"   健康检查: GET /health")
     print(f"   重新加载: GET /reload")
-    
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "fuwen_count": len(get_fuwen_list())}
+
+
+@app.get("/reload")
+async def reload():
+    global _fuwen_cache
+    _fuwen_cache = None
+    count = len(get_fuwen_list())
+    return {"status": "reloaded", "count": count}
+
+
+@app.post("/fuwen/detect")
+async def detect(request: Request):
     try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\n🛑 赋文检测器已停止")
-        server.server_close()
+        ke_json = await request.json()
+        
+        fuwen_list = get_fuwen_list()
+        
+        # CPU密集型，用 run_in_executor 避免阻塞
+        loop = asyncio.get_event_loop()
+        matched = await loop.run_in_executor(None, detect_fuwen, ke_json, fuwen_list)
+        
+        return {
+            'success': True,
+            'matched_count': len(matched),
+            'matched_fuwen': matched
+        }
+    except Exception as e:
+        return JSONResponse({
+            'success': False,
+            'error': str(e)
+        }, status_code=500)
+
+
+if __name__ == '__main__':
+    uvicorn.run(app, host='0.0.0.0', port=PORT, log_level='info')
